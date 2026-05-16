@@ -5,6 +5,7 @@ from langgraph.graph import StateGraph, END
 
 from agents.architect import ArchitectAgent
 from agents.executor import run_demo_tests
+from agents.memory import save_incident, get_similar_incidents
 from agents.observer import ObserverAgent
 
 
@@ -19,6 +20,8 @@ class HealixState(TypedDict):
     patch_diff: str
     patch_target_file: str
     use_docker: bool
+    incident_id: int
+    similar_incidents: list[dict[str, Any]]
     
     # Structured input fields
     error_input: Optional[dict[str, Any]]
@@ -44,6 +47,17 @@ def observer_node(state: HealixState):
     if error_input:
         # Use structured input to extract context
         context = observer.ingest_error(error_input)
+        incident_id = None
+        try:
+            incident_id = save_incident(
+                error_input,
+                context["logs"],
+                context["codebase_snapshot"],
+                context["environment_metadata"],
+            )
+        except Exception as exc:
+            print(f"Memory persistence skipped: {exc}")
+
         return {
             "logs": context["logs"],
             "codebase_snapshot": context["codebase_snapshot"],
@@ -61,6 +75,8 @@ def observer_node(state: HealixState):
             "suggested_fix": "",
             "patch_diff": "",
             "patch_target_file": context["error_file"],
+            "incident_id": incident_id,
+            "similar_incidents": [],
             "use_docker": state.get("use_docker", False),
             "error_input": error_input,
         }
@@ -89,6 +105,8 @@ def observer_node(state: HealixState):
             "suggested_fix": "",
             "patch_diff": "",
             "patch_target_file": "demo_app/logic.py",
+            "incident_id": None,
+            "similar_incidents": [],
             "use_docker": state.get("use_docker", False),
             "error_input": None,
         }
@@ -96,10 +114,22 @@ def observer_node(state: HealixState):
 
 def architect_node(state: HealixState):
     print("------PLANNING FIX-------")
+    similar_incidents = []
+    try:
+        similar_incidents = get_similar_incidents(
+            state.get("error_type", ""),
+            state.get("service_name", ""),
+            limit=3,
+        )
+    except Exception as exc:
+        print(f"Memory retrieval skipped: {exc}")
+
+    state["similar_incidents"] = similar_incidents
     agent = ArchitectAgent()
     result = agent.plan_fix(state)
     return {
         "suggested_fix": result["suggested_fix"],
+        "similar_incidents": similar_incidents,
     }
 
 

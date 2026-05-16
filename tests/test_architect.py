@@ -77,3 +77,37 @@ def test_architect_includes_failure_context_on_retry():
     assert "AssertionError" in retry_prompt
     assert "Why might the previous fix have failed?" in retry_prompt
 
+
+def test_architect_includes_similar_incidents_in_prompt():
+    agent = ArchitectAgent(api_key="sk-test")
+    captured_prompts = []
+
+    class CapturingLLM:
+        def invoke(self, prompt_value, **kwargs):
+            captured_prompts.append(str(prompt_value))
+            return DummyResponse("fixed code suggestion")
+
+    agent.llm = CapturingLLM()
+
+    state = {
+        "logs": "IndexError: list index out of range",
+        "codebase_snapshot": "def get_item(items, index):\n    return items[index]\n",
+        "retry_count": 0,
+        "test_results": "",
+        "similar_incidents": [
+            {
+                "error_type": "IndexError",
+                "message": "list index out of range",
+                "file_path": "demo_app/logic.py",
+                "service_name": "demo_app",
+            }
+        ],
+    }
+
+    agent.plan_fix(state)
+    prompt = captured_prompts[0]
+
+    assert "Similar past incidents:" in prompt
+    assert "list index out of range" in prompt
+    assert "demo_app/logic.py" in prompt
+

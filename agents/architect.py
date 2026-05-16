@@ -28,6 +28,18 @@ class ArchitectAgent:
         codebase_context = state.get("codebase_snapshot", "")
         retry_count = state.get("retry_count", 0)
         test_results = state.get("test_results", "")
+        similar_incidents = state.get("similar_incidents", [])
+
+        similar_context = ""
+        if similar_incidents:
+            similar_context = "Similar past incidents:\n"
+            for incident in similar_incidents:
+                similar_context += (
+                    f"- [{incident.get('error_type')}] "
+                    f"{incident.get('message')} in {incident.get('file_path')} "
+                    f"({incident.get('service_name')})\n"
+                )
+            similar_context += "\n"
 
         # Build the user prompt dynamically based on retry attempt
         if retry_count == 0:
@@ -35,6 +47,7 @@ class ArchitectAgent:
             user_prompt = (
                 f"Error logs:\n{logs}\n\n"
                 f"Codebase context:\n{codebase_context}\n\n"
+                f"{similar_context}"
                 f"Return the corrected code and a short explanation."
             )
         else:
@@ -44,6 +57,7 @@ class ArchitectAgent:
                 f"Error logs:\n{logs}\n\n"
                 f"Codebase context:\n{codebase_context}\n\n"
                 f"Previous attempt failed with:\n{test_results}\n\n"
+                f"{similar_context}"
                 f"The prior fix did not pass the tests. Please analyze why it failed and propose a different approach. "
                 f"Consider:\n"
                 f"1. What was the root cause of the error?\n"

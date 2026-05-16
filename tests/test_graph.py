@@ -110,3 +110,27 @@ def test_observer_node_with_structured_input():
     assert result["service_name"] == "test_service"
     assert "TypeError" in result["logs"]
 
+
+def test_observer_node_persists_incident(monkeypatch):
+    """Test that observer node persists an incident when memory is available."""
+    error_input = {
+        "error_type": "IndexError",
+        "message": "list index out of range",
+        "file": "demo_app/logic.py",
+        "line": 2,
+        "service_name": "demo_app",
+    }
+    state = create_test_state(error_input=error_input)
+
+    def fake_save_incident(error_input_arg, logs, code_snapshot, environment_metadata):
+        assert error_input_arg == error_input
+        assert "IndexError" in logs
+        return 42
+
+    monkeypatch.setattr("agents.graph.save_incident", fake_save_incident)
+
+    result = observer_node(state)
+
+    assert result["incident_id"] == 42
+    assert result["similar_incidents"] == []
+
