@@ -17,6 +17,8 @@ def create_test_state(**overrides):
         "test_results": "failed",
         "retry_count": 0,
         "is_resolved": False,
+        "patch_diff": "",
+        "patch_target_file": "test.py",
         "error_input": None,
         "error_type": "IndexError",
         "error_message": "list index out of range",

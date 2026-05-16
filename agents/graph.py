@@ -16,6 +16,9 @@ class HealixState(TypedDict):
     test_results: str
     retry_count: int
     is_resolved: bool
+    patch_diff: str
+    patch_target_file: str
+    use_docker: bool
     
     # Structured input fields
     error_input: Optional[dict[str, Any]]
@@ -56,6 +59,9 @@ def observer_node(state: HealixState):
             "is_resolved": False,
             "test_results": "",
             "suggested_fix": "",
+            "patch_diff": "",
+            "patch_target_file": context["error_file"],
+            "use_docker": state.get("use_docker", False),
             "error_input": error_input,
         }
     else:
@@ -81,6 +87,9 @@ def observer_node(state: HealixState):
             "is_resolved": False,
             "test_results": "",
             "suggested_fix": "",
+            "patch_diff": "",
+            "patch_target_file": "demo_app/logic.py",
+            "use_docker": state.get("use_docker", False),
             "error_input": None,
         }
 
@@ -97,7 +106,14 @@ def architect_node(state: HealixState):
 def executor_node(state: HealixState):
     print("----TESTING FIX------")
     project_root = Path(__file__).resolve().parent.parent
-    result = run_demo_tests(project_root, suggested_fix=state.get("suggested_fix"))
+    target_file = state.get("error_file") or state.get("patch_target_file") or "demo_app/logic.py"
+    use_docker = state.get("use_docker", False)
+    result = run_demo_tests(
+        project_root,
+        suggested_fix=state.get("suggested_fix"),
+        target_file=target_file,
+        use_docker=use_docker,
+    )
 
     output = result["stdout"]
     if result["stderr"]:
@@ -107,6 +123,9 @@ def executor_node(state: HealixState):
         "test_results": output.strip(),
         "is_resolved": result["status"] == "passed",
         "retry_count": state.get("retry_count", 0) + 1,
+        "patch_diff": result.get("patch_diff", ""),
+        "patch_target_file": result.get("patch_target_file", target_file),
+        "use_docker": use_docker,
     }
 
 

@@ -26,6 +26,7 @@ class PipelinePayload(BaseModel):
     """Pipeline request payload."""
     error: ErrorInput = Field(default=None, description="Structured error input")
     test_mode: bool = Field(default=False, description="If true, use default demo error")
+    use_docker: bool = Field(default=False, description="If true, run tests inside a Docker sandbox image")
 
 
 @app.post("/run-pipeline")
@@ -42,6 +43,8 @@ def run_pipeline(payload: PipelinePayload | None = None):
         else:
             # Use default/test mode
             initial_state["error_input"] = None
+
+        initial_state["use_docker"] = bool(payload.use_docker) if payload else False
         
         result = workflow.invoke(initial_state)
     except Exception as exc:
