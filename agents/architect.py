@@ -18,16 +18,41 @@ class ArchitectAgent:
         self.llm = ChatOpenAI(model=model, temperature=temperature, api_key=self.api_key)
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", "You are a Senior Site Reliability Engineer. "
-                        "Analyze the error logs and the codebase context, then propose a fix."),
-            ("user", "Error logs:\n{logs}\n\nCodebase context:\n{codebase_context}\n\n"
-                     "Return the corrected code and a short explanation.")
+                        "Analyze the error logs and the codebase context, then propose a fix. "
+                        "If this is a retry attempt, carefully review the prior failure and propose a different approach."),
+            ("user", "{user_prompt}")
         ])
 
     def plan_fix(self, state: dict[str, Any]) -> dict[str, str]:
-        prompt_value = self.prompt.format_prompt(
-            logs=state.get("logs", ""),
-            codebase_context=state.get("codebase_snapshot", "")
-        )
+        logs = state.get("logs", "")
+        codebase_context = state.get("codebase_snapshot", "")
+        retry_count = state.get("retry_count", 0)
+        test_results = state.get("test_results", "")
+
+        # Build the user prompt dynamically based on retry attempt
+        if retry_count == 0:
+            # First attempt
+            user_prompt = (
+                f"Error logs:\n{logs}\n\n"
+                f"Codebase context:\n{codebase_context}\n\n"
+                f"Return the corrected code and a short explanation."
+            )
+        else:
+            # Retry attempt - include prior failure context
+            user_prompt = (
+                f"RETRY ATTEMPT {retry_count}\n\n"
+                f"Error logs:\n{logs}\n\n"
+                f"Codebase context:\n{codebase_context}\n\n"
+                f"Previous attempt failed with:\n{test_results}\n\n"
+                f"The prior fix did not pass the tests. Please analyze why it failed and propose a different approach. "
+                f"Consider:\n"
+                f"1. What was the root cause of the error?\n"
+                f"2. Why might the previous fix have failed?\n"
+                f"3. What alternative solution should be tried?\n\n"
+                f"Return the corrected code and a detailed explanation of your approach."
+            )
+
+        prompt_value = self.prompt.format_prompt(user_prompt=user_prompt)
 
         response = self.llm.invoke(prompt_value)
         if isinstance(response, AIMessage):
