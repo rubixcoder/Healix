@@ -3,14 +3,15 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
+from agents.config import DEFAULT_CONTEXT_LINES
+
 
 class ObserverAgent:
     """Observability agent that ingests structured error input and extracts context."""
     
-    def __init__(self, context_lines: int = 5):
-        """
-        Initialize the observer agent.
-        
+    def __init__(self, context_lines: int = DEFAULT_CONTEXT_LINES):
+        """Initialize the observer agent.
+
         Args:
             context_lines: Number of lines to include before and after error line
         """

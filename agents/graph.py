@@ -4,6 +4,7 @@ from typing import TypedDict, Any, Optional
 from langgraph.graph import StateGraph, END
 
 from agents.architect import ArchitectAgent
+from agents.config import MAX_RETRIES
 from agents.executor import run_demo_tests
 from agents.memory import save_incident, get_similar_incidents
 from agents.observer import ObserverAgent
@@ -20,7 +21,7 @@ class HealixState(TypedDict):
     patch_diff: str
     patch_target_file: str
     use_docker: bool
-    incident_id: int
+    incident_id: Optional[int]
     similar_incidents: list[dict[str, Any]]
     
     # Structured input fields
@@ -35,6 +36,37 @@ class HealixState(TypedDict):
     service_name: str
     environment_metadata: dict[str, Any]
     context_code: str
+
+
+def _default_observer_context(use_docker: bool) -> HealixState:
+    try:
+        with open("demo_app/logic.py", "r", encoding="utf-8") as f:
+            code = f.read()
+    except FileNotFoundError:
+        code = ""
+
+    return {
+        "logs": "IndexError: list index out of range at demo_app/logic.py:2",
+        "codebase_snapshot": code,
+        "context_code": code,
+        "error_type": "IndexError",
+        "error_message": "list index out of range",
+        "error_file": "demo_app/logic.py",
+        "error_line": 2,
+        "stacktrace": "",
+        "service_name": "demo_app",
+        "environment_metadata": {},
+        "retry_count": 0,
+        "is_resolved": False,
+        "test_results": "",
+        "suggested_fix": "",
+        "patch_diff": "",
+        "patch_target_file": "demo_app/logic.py",
+        "incident_id": None,
+        "similar_incidents": [],
+        "use_docker": use_docker,
+        "error_input": None,
+    }
 
 
 def observer_node(state: HealixState):
@@ -80,36 +112,8 @@ def observer_node(state: HealixState):
             "use_docker": state.get("use_docker", False),
             "error_input": error_input,
         }
-    else:
-        # Fallback to default behavior for testing
-        try:
-            with open("demo_app/logic.py", "r", encoding="utf-8") as f:
-                code = f.read()
-        except FileNotFoundError:
-            code = ""
-        
-        return {
-            "logs": "IndexError: list index out of range at demo_app/logic.py:2",
-            "codebase_snapshot": code,
-            "context_code": code,
-            "error_type": "IndexError",
-            "error_message": "list index out of range",
-            "error_file": "demo_app/logic.py",
-            "error_line": 2,
-            "stacktrace": "",
-            "service_name": "demo_app",
-            "environment_metadata": {},
-            "retry_count": 0,
-            "is_resolved": False,
-            "test_results": "",
-            "suggested_fix": "",
-            "patch_diff": "",
-            "patch_target_file": "demo_app/logic.py",
-            "incident_id": None,
-            "similar_incidents": [],
-            "use_docker": state.get("use_docker", False),
-            "error_input": None,
-        }
+
+    return _default_observer_context(state.get("use_docker", False))
 
 
 def architect_node(state: HealixState):
@@ -160,10 +164,10 @@ def executor_node(state: HealixState):
 
 
 # Define routing logic
+
 def should_retry(state: HealixState) -> str:
     """Route to architect for retry if not resolved and under max retries, else end."""
-    max_retries = 3
-    if not state.get("is_resolved", False) and state.get("retry_count", 0) < max_retries:
+    if not state.get("is_resolved", False) and state.get("retry_count", 0) < MAX_RETRIES:
         return "architect"
     return "end"
 

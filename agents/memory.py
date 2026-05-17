@@ -2,12 +2,12 @@ import json
 import os
 from typing import Any, Iterable
 
+from agents.config import DEFAULT_DATABASE_URL
+
 try:
     import psycopg
 except ImportError:  # pragma: no cover
     psycopg = None
-
-DEFAULT_DATABASE_URL = "postgresql://healix:healix@localhost:5432/healix"
 
 
 def get_database_url() -> str:

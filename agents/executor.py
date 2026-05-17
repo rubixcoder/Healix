@@ -1,216 +1,11 @@
-import ast
-import difflib
-import os
-import re
 import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
 
-DOCKER_IMAGE_NAME = "healix-sandbox:latest"
-DOCKERFILE_NAME = "Dockerfile.sandbox"
-
-
-def _sanitize_suggested_fix(suggested_fix: str) -> str:
-    text = suggested_fix.strip()
-    if text.startswith("```") and text.endswith("```"):
-        text = text[3:-3].strip()
-
-    if "```" in text:
-        parts = text.split("```")
-        candidate = ""
-        for i, part in enumerate(parts):
-            if i % 2 == 1 and ("def " in part or "class " in part):
-                candidate = part.strip()
-                break
-        if candidate:
-            text = candidate
-
-    return text
-
-
-def _extract_top_level_block(text: str) -> tuple[str, str] | None:
-    lines = text.strip().splitlines()
-    if not lines:
-        return None
-
-    start_idx = None
-    for idx, line in enumerate(lines):
-        stripped = line.lstrip()
-        if stripped.startswith("def ") or stripped.startswith("class "):
-            start_idx = idx
-            break
-
-    if start_idx is None:
-        return None
-
-    block_lines = []
-    start_line = lines[start_idx]
-    signature = start_line.strip()
-    indent = len(start_line) - len(start_line.lstrip())
-    decorator_idx = start_idx
-
-    # Include any decorators that directly precede the block
-    while decorator_idx > 0:
-        prev_line = lines[decorator_idx - 1].strip()
-        if prev_line.startswith("@"):
-            decorator_idx -= 1
-        else:
-            break
-
-    block_lines.extend(lines[decorator_idx:start_idx + 1])
-
-    for line in lines[start_idx + 1:]:
-        if line.strip() == "":
-            block_lines.append(line)
-            continue
-        current_indent = len(line) - len(line.lstrip())
-        if current_indent <= indent and (line.lstrip().startswith("def ") or line.lstrip().startswith("class ")):
-            break
-        block_lines.append(line)
-
-    return "\n".join(block_lines).rstrip() + "\n", signature
-
-
-def _find_block_range(lines: list[str], signature: str) -> tuple[int, int] | None:
-    prefix = signature.split("(")[0].strip()
-    for idx, line in enumerate(lines):
-        stripped = line.lstrip()
-        if stripped.startswith(prefix) and stripped.endswith(":"):
-            indent = len(line) - len(stripped)
-            end_idx = idx + 1
-            for j in range(idx + 1, len(lines)):
-                if lines[j].strip() == "":
-                    continue
-                current_indent = len(lines[j]) - len(lines[j].lstrip())
-                if current_indent <= indent and lines[j].lstrip().startswith(("def ", "class ")):
-                    break
-                end_idx = j + 1
-            return idx, end_idx
-    return None
-
-
-def _apply_suggested_fix_to_file(original_file: Path, suggested_fix: str) -> dict[str, Any]:
-    original_text = original_file.read_text(encoding="utf-8")
-    sanitized = _sanitize_suggested_fix(suggested_fix)
-    block_result = _extract_top_level_block(sanitized)
-
-    if block_result is None:
-        updated_text = sanitized
-        replaced = False
-    else:
-        block_text, signature = block_result
-        original_lines = original_text.splitlines()
-        block_range = _find_block_range(original_lines, signature)
-        if block_range:
-            start, end = block_range
-            updated_lines = original_lines[:start] + block_text.splitlines() + original_lines[end:]
-            updated_text = "\n".join(updated_lines).rstrip() + "\n"
-            replaced = True
-        else:
-            updated_text = sanitized
-            replaced = False
-
-    patch_diff = _generate_patch(original_text, updated_text, str(original_file), str(original_file))
-
-    if not _validate_patch(patch_diff):
-        return {
-            "applied": False,
-            "error": "Patch validation failed: patch is too broad or empty.",
-            "patch_diff": patch_diff,
-            "target_file": str(original_file),
-        }
-
-    original_file.write_text(updated_text, encoding="utf-8")
-
-    if original_file.suffix == ".py":
-        syntax_error = _syntax_check_python_file(original_file)
-        if syntax_error is not None:
-            return {
-                "applied": False,
-                "error": f"Syntax validation failed: {syntax_error}",
-                "patch_diff": patch_diff,
-                "target_file": str(original_file),
-            }
-
-    return {
-        "applied": True,
-        "patch_diff": patch_diff,
-        "target_file": str(original_file),
-        "replaced_block": replaced,
-    }
-
-
-def _generate_patch(original_text: str, updated_text: str, fromfile: str, tofile: str) -> str:
-    original_lines = original_text.splitlines(keepends=True)
-    updated_lines = updated_text.splitlines(keepends=True)
-    diff = difflib.unified_diff(
-        original_lines,
-        updated_lines,
-        fromfile=fromfile,
-        tofile=tofile,
-        lineterm="",
-    )
-    return "\n".join(diff)
-
-
-def _validate_patch(patch_diff: str, max_changed_lines: int = 100) -> bool:
-    if not patch_diff.strip():
-        return False
-
-    changes = [line for line in patch_diff.splitlines() if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))]
-    return len(changes) <= max_changed_lines
-
-
-def _syntax_check_python_file(path: Path) -> str | None:
-    try:
-        source = path.read_text(encoding="utf-8")
-        ast.parse(source)
-        return None
-    except SyntaxError as exc:
-        return str(exc)
-
-
-def _docker_image_exists(image_name: str) -> bool:
-    completed = subprocess.run(
-        ["docker", "image", "inspect", image_name],
-        capture_output=True,
-        text=True,
-    )
-    return completed.returncode == 0
-
-
-def _build_docker_image(root: Path, image_name: str) -> dict[str, Any]:
-    dockerfile_path = root / DOCKERFILE_NAME
-    if not dockerfile_path.exists():
-        return {
-            "status": "failed",
-            "return_code": 1,
-            "stdout": "",
-            "stderr": f"Dockerfile not found: {dockerfile_path}",
-        }
-
-    command = [
-        "docker",
-        "build",
-        "-t",
-        image_name,
-        "-f",
-        str(dockerfile_path),
-        str(root),
-    ]
-    completed = subprocess.run(
-        command,
-        cwd=root,
-        capture_output=True,
-        text=True,
-    )
-    return {
-        "status": "passed" if completed.returncode == 0 else "failed",
-        "return_code": completed.returncode,
-        "stdout": completed.stdout,
-        "stderr": completed.stderr,
-    }
+from agents.config import DOCKER_IMAGE_NAME
+from agents.docker_orchestrator import _build_docker_image, _docker_image_exists
+from agents.patch_manager import apply_patch_to_file
 
 
 def _run_pytest(root: Path) -> dict[str, Any]:
@@ -221,7 +16,6 @@ def _run_pytest(root: Path) -> dict[str, Any]:
         capture_output=True,
         text=True,
     )
-
     return {
         "status": "passed" if completed.returncode == 0 else "failed",
         "return_code": completed.returncode,
@@ -231,15 +25,14 @@ def _run_pytest(root: Path) -> dict[str, Any]:
 
 
 def _run_pytest_docker(root: Path, image_name: str) -> dict[str, Any]:
+    project_root = root
+    if project_root.name == "sandbox_run":
+        project_root = project_root.parent
+
     if not _docker_image_exists(image_name):
-        build_result = _build_docker_image(root, image_name)
+        build_result = _build_docker_image(project_root, image_name)
         if build_result["status"] != "passed":
-            return {
-                "status": "failed",
-                "return_code": build_result["return_code"],
-                "stdout": build_result["stdout"],
-                "stderr": build_result["stderr"],
-            }
+            return build_result
 
     command = [
         "docker",
@@ -259,7 +52,6 @@ def _run_pytest_docker(root: Path, image_name: str) -> dict[str, Any]:
         capture_output=True,
         text=True,
     )
-
     return {
         "status": "passed" if completed.returncode == 0 else "failed",
         "return_code": completed.returncode,
@@ -296,7 +88,7 @@ def run_demo_tests(project_root: Path | str | None = None, suggested_fix: str | 
                 "patch_applied": False,
             }
 
-        patch_result = _apply_suggested_fix_to_file(sandbox_target_file, suggested_fix)
+        patch_result = apply_patch_to_file(sandbox_target_file, suggested_fix)
         patch_diff = patch_result.get("patch_diff", "")
         raw_target = patch_result.get("target_file", patch_target_file)
         try:

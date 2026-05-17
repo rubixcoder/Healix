@@ -6,9 +6,12 @@ from langchain_core.messages.ai import AIMessage
 from langchain_core.prompts import ChatPromptTemplate
 
 
+from agents.config import OPENAI_API_KEY
+
+
 class ArchitectAgent:
     def __init__(self, api_key: str | None = None, model: str = "gpt-4o", temperature: float = 0.0):
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        self.api_key = api_key or OPENAI_API_KEY
         if not self.api_key:
             raise RuntimeError(
                 "OPENAI_API_KEY is required to initialize ArchitectAgent. "
